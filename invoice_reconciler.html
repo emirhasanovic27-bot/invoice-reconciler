@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Reconciler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F6F1E6;
+    --paper-dim: #EFE8D8;
+    --ink: #232017;
+    --ink-soft: #5B5444;
+    --rule: rgba(35,32,23,0.16);
+    --brass: #B0792E;
+    --brass-deep: #8C5E20;
+    --green: #3F7A57;
+    --green-bg: #E7F0E7;
+    --red: #A8472E;
+    --red-bg: #F3E5DF;
+    --shadow: 0 1px 2px rgba(35,32,23,0.06);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(35,32,23,0.025) 28px);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 48px 20px 80px;
+  }
+
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brass-deep);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.05;
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+
+  .lede {
+    color: var(--ink-soft);
+    font-size: 15.5px;
+    line-height: 1.55;
+    max-width: 540px;
+    margin: 0 0 36px;
+  }
+
+  .card {
+    background: #FFFEFB;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+
+  .uploads {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 600px) {
+    .uploads { grid-template-columns: 1fr; }
+  }
+
+  .dropzone {
+    padding: 22px 18px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+    border: 1.5px dashed var(--rule);
+    border-radius: 10px;
+    background: #FFFEFB;
+    position: relative;
+  }
+  .dropzone:hover { border-color: var(--brass); }
+  .dropzone.drag { border-color: var(--brass); background: #FBF4E6; }
+  .dropzone input[type=file] { display: none; }
+
+  .dz-label {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin-bottom: 4px;
+  }
+  .dz-sub {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-bottom: 12px;
+  }
+  .dz-count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    color: var(--brass-deep);
+    line-height: 1;
+  }
+  .dz-countlabel {
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+
+  .filelist {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .fileitem {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    background: var(--paper-dim);
+    border-radius: 5px;
+    padding: 5px 8px;
+    gap: 8px;
+  }
+  .fileitem span.name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fileitem button {
+    border: none;
+    background: none;
+    color: var(--ink-soft);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .fileitem button:hover { color: var(--red); }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 28px 0 8px;
+  }
+
+  button.primary {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 14.5px;
+    color: #FFFCF4;
+    background: linear-gradient(180deg, var(--brass) 0%, var(--brass-deep) 100%);
+    border: none;
+    border-radius: 8px;
+    padding: 13px 26px;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(140,94,32,0.28);
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+  }
+  button.primary:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(140,94,32,0.32); }
+  button.primary:active { transform: translateY(0); }
+  button.primary:disabled {
+    background: #C9C2AF;
+    box-shadow: none;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  button.ghost {
+    font-family: 'Inter', sans-serif;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    background: none;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 12px 18px;
+    cursor: pointer;
+  }
+  button.ghost:hover { border-color: var(--ink-soft); color: var(--ink); }
+
+  .errorbox {
+    background: var(--red-bg);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13.5px;
+    margin-top: 14px;
+    display: none;
+  }
+
+  /* ---- results / receipt ---- */
+  #results { display: none; margin-top: 40px; }
+
+  .receipt {
+    background: #FFFEFB;
+    border: 1px solid var(--rule);
+    padding: 28px 30px 22px;
+    position: relative;
+    clip-path: polygon(
+      0% 0%, 100% 0%, 100% 100%,
+      96% 96%, 92% 100%, 88% 96%, 84% 100%, 80% 96%, 76% 100%, 72% 96%, 68% 100%,
+      64% 96%, 60% 100%, 56% 96%, 52% 100%, 48% 96%, 44% 100%, 40% 96%, 36% 100%,
+      32% 96%, 28% 100%, 24% 96%, 20% 100%, 16% 96%, 12% 100%, 8% 96%, 4% 100%, 0% 96%
+    );
+    box-shadow: 0 6px 18px rgba(35,32,23,0.08);
+    animation: rise 0.4s ease;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .receipt-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px dashed var(--rule);
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+  }
+  .receipt-head h2 {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .receipt-head .stamp {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--green);
+    border: 1.5px solid var(--green);
+    border-radius: 4px;
+    padding: 3px 8px;
+    text-transform: uppercase;
+    transform: rotate(-3deg);
+  }
+  .receipt-head .stamp.warn {
+    color: var(--brass-deep);
+    border-color: var(--brass-deep);
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    padding: 6px 0;
+    border-bottom: 1px dotted var(--rule);
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 500;
+  }
+  .stat-row.total {
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: 1.5px solid var(--ink);
+    border-bottom: none;
+    font-weight: 600;
+  }
+  .stat-row.total .num { font-size: 17px; }
+
+  .flagged {
+    margin-top: 18px;
+    background: var(--red-bg);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 13px;
+  }
+  .flagged.amber { background: #FBF1DD; }
+  .flagged h3 {
+    font-size: 13px;
+    margin: 0 0 8px;
+    font-weight: 600;
+    color: var(--red);
+  }
+  .flagged.amber h3 { color: var(--brass-deep); }
+  .flagged ul {
+    margin: 0;
+    padding-left: 18px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .flagged li {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    margin-bottom: 4px;
+    line-height: 1.5;
+  }
+
+  .download-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 22px;
+  }
+
+  .preview {
+    margin-top: 30px;
+  }
+  .preview h3 {
+    font-size: 13px;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0 0 10px;
+  }
+  table.preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  table.preview-table th, table.preview-table td {
+    border-bottom: 1px solid var(--rule);
+    padding: 7px 8px;
+    text-align: left;
+    white-space: nowrap;
+  }
+  table.preview-table th {
+    color: var(--ink-soft);
+    font-weight: 500;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .preview-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; }
+
+  footer {
+    margin-top: 56px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Monthly billing &middot; Upwork / Google</div>
+  <h1>Invoice Reconciler</h1>
+  <p class="lede">Drop in your Invoice Support files and the Custom Export. This rebuilds the finished billing template automatically — same matching logic already checked line by line against your May file.</p>
+
+  <div class="card" style="padding: 24px;">
+    <div class="uploads">
+      <div class="dropzone" id="dz-invoices">
+        <input type="file" id="input-invoices" multiple accept=".csv">
+        <div class="dz-label">Invoice Support files</div>
+        <div class="dz-sub">Usually around 10 CSVs</div>
+        <div class="dz-count" id="count-invoices">0</div>
+        <div class="dz-countlabel">files added</div>
+        <div class="filelist" id="list-invoices"></div>
+      </div>
+      <div class="dropzone" id="dz-custom">
+        <input type="file" id="input-custom" accept=".csv">
+        <div class="dz-label">Custom Export</div>
+        <div class="dz-sub">One CSV for the period</div>
+        <div class="dz-count" id="count-custom">0</div>
+        <div class="dz-countlabel">file added</div>
+        <div class="filelist" id="list-custom"></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="btn-process" disabled>Generate template</button>
+      <button class="ghost" id="btn-reset">Clear all</button>
+    </div>
+    <div class="errorbox" id="errorbox"></div>
+  </div>
+
+  <div id="results">
+    <div class="receipt">
+      <div class="receipt-head">
+        <h2>Reconciliation summary</h2>
+        <div class="stamp" id="stamp">Processed</div>
+      </div>
+
+      <div class="stat-row"><span>Invoice line items read</span><span class="num" id="s-total-read">—</span></div>
+      <div class="stat-row"><span>Skipped — $0.00 line</span><span class="num" id="s-zero">—</span></div>
+      <div class="stat-row"><span>Skipped — odesk_managed</span><span class="num" id="s-odesk">—</span></div>
+      <div class="stat-row"><span>Skipped — refund / adjustment</span><span class="num" id="s-refund">—</span></div>
+      <div class="stat-row"><span>Unmatched in Custom Export</span><span class="num" id="s-unmatched">—</span></div>
+      <div class="stat-row total"><span>Rows in finished template</span><span class="num" id="s-output">—</span></div>
+
+      <div class="flagged" id="box-unmatched" style="display:none;">
+        <h3>Unmatched against Custom Export — not included, needs a manual look</h3>
+        <ul id="list-unmatched"></ul>
+      </div>
+      <div class="flagged amber" id="box-unknown" style="display:none;">
+        <h3>Unrecognized role or language code — included, but double-check the wording</h3>
+        <ul id="list-unknown"></ul>
+      </div>
+      <div class="flagged amber" id="box-refunds" style="display:none;">
+        <h3>Refund / adjustment lines left out (per your rule) — handle separately if needed</h3>
+        <ul id="list-refunds"></ul>
+      </div>
+
+      <div class="download-row">
+        <button class="primary" id="btn-download">Download finished CSV</button>
+        <span style="font-size:12.5px;color:var(--ink-soft);" id="download-filename"></span>
+      </div>
+    </div>
+
+    <div class="preview">
+      <h3>First rows of the output</h3>
+      <div class="preview-wrap">
+        <table class="preview-table" id="preview-table"></table>
+      </div>
+    </div>
+  </div>
+
+  <footer>Everything runs in your browser — no files are uploaded anywhere.</footer>
+</div>
+
+<script>
+const LANG_MAP = {
+  'ar':'Arabic','ca':'Catalan','cs':'Czech','de':'German','es-419':'Spanish',
+  'fi':'Finnish','fr':'French','hu':'Hungarian','id':'Indonesian','it':'Italian',
+  'iw':'Hebrew','ja':'Japanese','kn':'Kannada','ko':'Korean','ms':'Malay(Latin)',
+  'nl':'Dutch','no':'Norwegian','pl':'Polish','pt':'Portuguese-BR','ro':'Romanian',
+  'ru':'Russian','sv':'Swedish','ta':'Tamil','th':'Thai','tr':'Turkish',
+  'uk':'Ukrainian','vi':'Vietnamese','zh-cn':'Chinese-Simplified','zh-tw':'Chinese-Traditional'
+};
+
+const OUTPUT_HEADER = ['Vendor','Project','Program','Ldap Username','Role Title Item Name','Cost Category','Facility Type','Facility Code','Facility Location','Billing Period Start Date','Billing Period End Date','Rate Unit','Currency','Billing Rate','Billed Uom','Billed Units','Usd Exchange Rate','Total Billed Amount Usd','Comments'];
+
+let invoiceFiles = [];
+let customFile = null;
+let generatedCsv = null;
+let generatedFilename = 'Invoice_Template.csv';
+
+// ---------- CSV parsing ----------
+function parseCSV(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const rows = [];
+  let field = '', row = [], inQuotes = false, i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i+1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += ch; i++; continue;
+    } else {
+      if (ch === '"') { inQuotes = true; i++; continue; }
+      if (ch === ',') { row.push(field); field = ''; i++; continue; }
+      if (ch === '\r') { i++; continue; }
+      if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+      field += ch; i++; continue;
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+}
+
+function findCol(headers, name) {
+  const target = name.trim().toLowerCase();
+  return headers.findIndex(h => h.trim().toLowerCase() === target);
+}
+
+function csvField(value) {
+  const s = String(value === null || value === undefined ? '' : value);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+// ---------- helpers ----------
+function stripCodeSuffix(code) {
+  let c = (code || '').trim().toLowerCase();
+  if (c.endsWith('-s')) c = c.slice(0, -2);
+  const m = c.match(/^(.*)-(\d+)$/);
+  return m ? m[1] : c;
+}
+
+function parseMoney(str) {
+  if (str === null || str === undefined) return null;
+  let s = String(str).trim();
+  if (s === '') return null;
+  const neg = s.startsWith('-') || (s.startsWith('(') && s.endsWith(')'));
+  s = s.replace(/[\$,()\-]/g, '');
+  if (s === '') return null;
+  const val = parseFloat(s);
+  return isNaN(val) ? null : (neg ? -val : val);
+}
+
+function formatMoney(num) {
+  return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatUnits(hoursStr) {
+  const hv = Math.abs(parseFloat(hoursStr));
+  if (isNaN(hv)) return '';
+  return parseFloat(hv.toFixed(6)).toString();
+}
+
+function normalizeDateKey(str) {
+  const parts = (str || '').trim().split('/');
+  if (parts.length !== 3) return null;
+  const m = parseInt(parts[0], 10), d = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
+  if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
+  return y + '-' + m + '-' + d;
+}
+
+function normalizeUsernameKey(u) {
+  let s = (u || '').trim().toLowerCase();
+  if (/^\d+$/.test(s)) s = s.replace(/^0+/, '') || '0';
+  return s;
+}
+
+function getRoleTitle(contract, gcode) {
+  let c = (contract || '').trim();
+  let cl = c.toLowerCase();
+  if (cl.startsWith('surge')) {
+    const idx = c.indexOf('-');
+    c = idx >= 0 ? c.slice(idx + 1).trim() : c;
+    cl = c.toLowerCase();
+  }
+  if (cl.startsWith('program manager') || cl.startsWith('senior program manager')) {
+    return { role: 'Program Manager', ok: true };
+  }
+  if (cl.startsWith('lead')) {
+    const gc = (gcode || '').trim().toLowerCase();
+    const tierMap = { 'cl-1': 'I', 'cl-2': 'II', 'cl-3': 'III' };
+    const tier = tierMap[gc];
+    return tier ? { role: 'Lead ' + tier, ok: true } : { role: 'Lead (' + gcode + ')', ok: false };
+  }
+  let m = cl.match(/^analyst\s+en\s+(i{1,3}v?|iv)\b/);
+  if (m) {
+    const tierText = c.slice(cl.indexOf('analyst') + 'analyst'.length).trim();
+    const tierWord = tierText.split(' - ')[0].split('[')[0].trim();
+    const parts = tierWord.split(/\s+/);
+    const roman = parts[parts.length - 1].toUpperCase();
+    return { role: 'Analyst EN ' + roman + ' English', ok: true };
+  }
+  m = cl.match(/^analyst\s+i18n\s+(i{1,3})\b/);
+  if (m) {
+    const tierText = c.slice(cl.indexOf('analyst') + 'analyst'.length).trim();
+    const tierWord = tierText.split(' - ')[0].split('[')[0].trim();
+    const parts = tierWord.split(/\s+/);
+    const roman = parts[parts.length - 1].toUpperCase();
+    const baseCode = stripCodeSuffix(gcode);
+    const lang = LANG_MAP[baseCode];
+    if (!lang) return { role: 'Analyst i18n ' + roman + ' UNKNOWN(' + gcode + ')', ok: false };
+    return { role: 'Analyst i18n ' + roman + ' ' + lang, ok: true };
+  }
+  return { role: 'UNRECOGNIZED(' + contract + '|' + gcode + ')', ok: false };
+}
+
+function getProjectProgram(team) {
+  const t = (team || '').toLowerCase();
+  if (t.includes('content')) return { project: 'Content', program: 'Search Content Cur, Multimodal, Schema', ok: true };
+  if (t.includes('1p') && t.includes('feedback')) return { project: 'Feedback', program: '1P Feedback', ok: true };
+  if (t.includes('aia') && t.includes('feedback')) return { project: 'Feedback', program: 'AIA Feedback', ok: true };
+  return { project: null, program: null, ok: false };
+}
+
+// ---------- file UI wiring ----------
+function setupDropzone(dzId, inputId, onFiles, multiple) {
+  const dz = document.getElementById(dzId);
+  const input = document.getElementById(inputId);
+  dz.addEventListener('click', (e) => { if (e.target.tagName !== 'BUTTON') input.click(); });
+  input.addEventListener('change', () => { onFiles(Array.from(input.files)); input.value = ''; });
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dz.classList.remove('drag');
+    let files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.csv'));
+    if (!multiple) files = files.slice(0, 1);
+    onFiles(files);
+  });
+}
+
+function renderInvoiceList() {
+  document.getElementById('count-invoices').textContent = invoiceFiles.length;
+  const list = document.getElementById('list-invoices');
+  list.innerHTML = '';
+  invoiceFiles.forEach((f, idx) => {
+    const div = document.createElement('div');
+    div.className = 'fileitem';
+    div.innerHTML = '<span class="name">' + f.name + '</span><button data-idx="' + idx + '">&times;</button>';
+    list.appendChild(div);
+  });
+  list.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      invoiceFiles.splice(parseInt(btn.dataset.idx, 10), 1);
+      renderInvoiceList();
+      updateProcessButton();
+    });
+  });
+}
+
+function renderCustomList() {
+  document.getElementById('count-custom').textContent = customFile ? 1 : 0;
+  const list = document.getElementById('list-custom');
+  list.innerHTML = '';
+  if (customFile) {
+    const div = document.createElement('div');
+    div.className = 'fileitem';
+    div.innerHTML = '<span class="name">' + customFile.name + '</span><button id="rm-custom">&times;</button>';
+    list.appendChild(div);
+    document.getElementById('rm-custom').addEventListener('click', (e) => {
+      e.stopPropagation();
+      customFile = null;
+      renderCustomList();
+      updateProcessButton();
+    });
+  }
+}
+
+function updateProcessButton() {
+  document.getElementById('btn-process').disabled = !(invoiceFiles.length > 0 && customFile);
+  document.getElementById('errorbox').style.display = 'none';
+}
+
+setupDropzone('dz-invoices', 'input-invoices', (files) => {
+  files.forEach(f => {
+    if (!invoiceFiles.some(x => x.name === f.name && x.size === f.size)) invoiceFiles.push(f);
+  });
+  renderInvoiceList();
+  updateProcessButton();
+}, true);
+
+setupDropzone('dz-custom', 'input-custom', (files) => {
+  if (files.length) customFile = files[0];
+  renderCustomList();
+  updateProcessButton();
+}, false);
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  invoiceFiles = [];
+  customFile = null;
+  renderInvoiceList();
+  renderCustomList();
+  updateProcessButton();
+  document.getElementById('results').style.display = 'none';
+});
+
+function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function showError(msg) {
+  const box = document.getElementById('errorbox');
+  box.textContent = msg;
+  box.style.display = 'block';
+}
+
+// ---------- main processing ----------
+async function processFiles() {
+  document.getElementById('errorbox').style.display = 'none';
+  document.getElementById('btn-process').disabled = true;
+  document.getElementById('btn-process').textContent = 'Processing…';
+
+  try {
+    const customText = await readFileText(customFile);
+    const customRows = parseCSV(customText);
+    if (customRows.length < 2) throw new Error('Custom Export file looks empty.');
+    const cHeaders = customRows[0];
+    const cDate = findCol(cHeaders, 'date');
+    const cUser = findCol(cHeaders, 'username');
+    const cContract = findCol(cHeaders, 'contract');
+    const cGcode = findCol(cHeaders, 'g-code');
+    if ([cDate, cUser, cContract, cGcode].includes(-1)) {
+      throw new Error('Could not find expected columns (Date, Username, Contract, G-Code) in the Custom Export header.');
+    }
+
+    const customIndex = {};
+    let duplicateConflicts = 0;
+    for (let i = 1; i < customRows.length; i++) {
+      const r = customRows[i];
+      if (!r || r.length < cGcode + 1) continue;
+      const dKey = normalizeDateKey(r[cDate]);
+      if (dKey === null) continue;
+      const uname = (r[cUser] || '').trim();
+      const gcode = (r[cGcode] || '').trim();
+      const key = dKey + '|' + normalizeUsernameKey(uname) + '|' + gcode.toLowerCase();
+      const entry = { contract: r[cContract], gcode: gcode, username: uname };
+      if (!customIndex[key]) customIndex[key] = [];
+      else {
+        const prev = customIndex[key][0];
+        const prevRole = getRoleTitle(prev.contract, prev.gcode).role;
+        const newRole = getRoleTitle(entry.contract, entry.gcode).role;
+        if (prevRole !== newRole) duplicateConflicts++;
+      }
+      customIndex[key].push(entry);
+    }
+
+    let totalRead = 0, zeroSkipped = 0, odeskSkipped = 0, refundSkipped = 0, unmatchedCount = 0, unknownCount = 0;
+    const refundList = [], unmatchedList = [], unknownList = [];
+    const outputRows = [];
+
+    for (const file of invoiceFiles) {
+      const text = await readFileText(file);
+      const rows = parseCSV(text);
+      if (rows.length < 1) continue;
+      const headers = rows[0];
+      const iDate = findCol(headers, 'date');
+      const iUser = findCol(headers, 'username');
+      const iDesc = findCol(headers, 'description');
+      const iTeam = findCol(headers, 'team');
+      const iGcode = findCol(headers, 'g-code');
+      const iHours = findCol(headers, 'hours');
+      const iRate = findCol(headers, 'bill rate');
+      const iTotal = findCol(headers, 'total billing');
+      if ([iUser, iDesc, iTeam, iGcode, iHours, iRate, iTotal].includes(-1)) {
+        throw new Error('File "' + file.name + '" is missing one of the expected columns (Username, Description, Team, G-Code, Hours, Bill Rate, Total Billing).');
+      }
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r || r.length < iTotal + 1) continue;
+        totalRead++;
+        const username = (r[iUser] || '').trim();
+        const desc = r[iDesc] || '';
+        const team = r[iTeam] || '';
+        const gcode = (r[iGcode] || '').trim();
+        const hours = r[iHours] || '';
+        const billrate = r[iRate] || '';
+        const total = r[iTotal] || '';
+
+        if (username.toLowerCase() === 'odesk_managed') { odeskSkipped++; continue; }
+        const totalVal = parseMoney(total);
+        if (totalVal === null || totalVal === 0) { zeroSkipped++; continue; }
+
+        const m = desc.match(/(\d{1,2}\/\d{1,2}\/\d{4})-(\d{1,2}\/\d{1,2}\/\d{4})/);
+        if (!m) {
+          refundSkipped++;
+          refundList.push(username + ' — "' + desc.trim() + '" — ' + formatMoney(totalVal));
+          continue;
+        }
+        const start = m[1], end = m[2];
+        const dKey = normalizeDateKey(start);
+        const key = dKey + '|' + normalizeUsernameKey(username) + '|' + gcode.toLowerCase();
+        const matches = customIndex[key];
+        if (!matches || matches.length === 0) {
+          unmatchedCount++;
+          unmatchedList.push(username + ' — week of ' + start + ' — code ' + gcode + ' — ' + formatMoney(Math.abs(totalVal)));
+          continue;
+        }
+        const match = matches[0];
+        const roleResult = getRoleTitle(match.contract, match.gcode);
+        const pp = getProjectProgram(team);
+        if (!roleResult.ok) {
+          unknownCount++;
+          unknownList.push(match.username + ' — week of ' + start + ' — "' + roleResult.role + '"');
+        }
+        if (!pp.ok) {
+          unmatchedCount++;
+          unmatchedList.push(username + ' — week of ' + start + ' — team "' + team + '" did not match Content/Feedback');
+          continue;
+        }
+
+        const billingRate = billrate.trim() !== '' ? Math.abs(parseMoney(billrate)) : null;
+        const billedUnits = hours.trim() !== '' ? formatUnits(hours) : '';
+        const totalAmt = Math.abs(totalVal);
+
+        outputRows.push([
+          'Upwork Global Inc.', pp.project, pp.program, match.username, roleResult.role,
+          'Resource', 'Remote', '', 'Remote',
+          start, end, 'Hourly', 'USD',
+          billingRate !== null ? formatMoney(billingRate) : '',
+          'Hours', billedUnits, 1,
+          formatMoney(totalAmt), ''
+        ]);
+      }
+    }
+
+    // build CSV
+    const lines = [OUTPUT_HEADER.map(csvField).join(',')];
+    for (const row of outputRows) lines.push(row.map(csvField).join(','));
+    generatedCsv = lines.join('\r\n');
+
+    const today = new Date();
+    generatedFilename = 'Invoice_Template_' + today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0') + '.csv';
+
+    // ---- render results ----
+    document.getElementById('s-total-read').textContent = totalRead.toLocaleString();
+    document.getElementById('s-zero').textContent = zeroSkipped.toLocaleString();
+    document.getElementById('s-odesk').textContent = odeskSkipped.toLocaleString();
+    document.getElementById('s-refund').textContent = refundSkipped.toLocaleString();
+    document.getElementById('s-unmatched').textContent = unmatchedCount.toLocaleString();
+    document.getElementById('s-output').textContent = outputRows.length.toLocaleString();
+
+    const stamp = document.getElementById('stamp');
+    if (unmatchedCount > 0 || duplicateConflicts > 0) {
+      stamp.textContent = 'Review needed';
+      stamp.classList.add('warn');
+    } else {
+      stamp.textContent = 'Clean run';
+      stamp.classList.remove('warn');
+    }
+
+    fillFlaggedBox('box-unmatched', 'list-unmatched', unmatchedList);
+    fillFlaggedBox('box-unknown', 'list-unknown', unknownList);
+    fillFlaggedBox('box-refunds', 'list-refunds', refundList);
+
+    renderPreview(outputRows.slice(0, 8));
+    document.getElementById('download-filename').textContent = generatedFilename;
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  } catch (err) {
+    showError(err.message || String(err));
+  } finally {
+    document.getElementById('btn-process').disabled = false;
+    document.getElementById('btn-process').textContent = 'Generate template';
+  }
+}
+
+function fillFlaggedBox(boxId, listId, items) {
+  const box = document.getElementById(boxId);
+  const list = document.getElementById(listId);
+  if (!items.length) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  list.innerHTML = '';
+  items.slice(0, 50).forEach(text => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    list.appendChild(li);
+  });
+  if (items.length > 50) {
+    const li = document.createElement('li');
+    li.textContent = '… and ' + (items.length - 50) + ' more';
+    list.appendChild(li);
+  }
+}
+
+function renderPreview(rows) {
+  const table = document.getElementById('preview-table');
+  table.innerHTML = '';
+  const thead = document.createElement('tr');
+  OUTPUT_HEADER.forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    thead.appendChild(th);
+  });
+  table.appendChild(thead);
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    r.forEach(val => {
+      const td = document.createElement('td');
+      td.textContent = val;
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-process').addEventListener('click', processFiles);
+
+document.getElementById('btn-download').addEventListener('click', () => {
+  if (!generatedCsv) return;
+  const blob = new Blob([generatedCsv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = generatedFilename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
