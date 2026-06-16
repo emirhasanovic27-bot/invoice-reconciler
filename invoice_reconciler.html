@@ -393,6 +393,7 @@
       </div>
 
       <div class="stat-row"><span>Invoice line items read</span><span class="num" id="s-total-read">—</span></div>
+      <div class="stat-row"><span>Custom Export rows indexed</span><span class="num" id="s-custom-indexed">—</span></div>
       <div class="stat-row"><span>Skipped — $0.00 line</span><span class="num" id="s-zero">—</span></div>
       <div class="stat-row"><span>Skipped — odesk_managed</span><span class="num" id="s-odesk">—</span></div>
       <div class="stat-row"><span>Refund / adjustment lines found</span><span class="num" id="s-refund-found">—</span></div>
@@ -732,6 +733,7 @@ async function processFiles() {
 
     const customIndex = {};
     let duplicateConflicts = 0;
+    let customIndexedCount = 0;
     for (let i = 1; i < customRows.length; i++) {
       const r = customRows[i];
       if (!r || r.length < cGcode + 1) continue;
@@ -749,6 +751,7 @@ async function processFiles() {
         if (prevRole !== newRole) duplicateConflicts++;
       }
       customIndex[key].push(entry);
+      customIndexedCount++;
     }
 
     let totalRead = 0, zeroSkipped = 0, odeskSkipped = 0, unmatchedCount = 0, unknownCount = 0;
@@ -945,6 +948,7 @@ async function processFiles() {
 
     // ---- render results ----
     document.getElementById('s-total-read').textContent = totalRead.toLocaleString();
+    document.getElementById('s-custom-indexed').textContent = customIndexedCount.toLocaleString() + ' / ' + (customRows.length - 1).toLocaleString();
     document.getElementById('s-zero').textContent = zeroSkipped.toLocaleString();
     document.getElementById('s-odesk').textContent = odeskSkipped.toLocaleString();
     document.getElementById('s-refund-found').textContent = refundFound.toLocaleString();
