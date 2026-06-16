@@ -448,6 +448,9 @@ const LANG_MAP = {
 
 const OUTPUT_HEADER = ['Vendor','Project','Program','Ldap Username','Role Title Item Name','Cost Category','Facility Type','Facility Code','Facility Location','Billing Period Start Date','Billing Period End Date','Rate Unit','Currency','Billing Rate','Billed Uom','Billed Units','Usd Exchange Rate','Total Billed Amount Usd','Comments'];
 
+// Tolerates both "MM/DD/YYYY-MM/DD/YYYY" and "MM/DD/YYYY - MM/DD/YYYY" (spaces around the hyphen vary by export)
+const INVOICE_PERIOD_RE = /(\d{1,2}\/\d{1,2}\/\d{4})\s*-\s*(\d{1,2}\/\d{1,2}\/\d{4})/;
+
 let invoiceFiles = [];
 let customFile = null;
 let generatedCsv = null;
@@ -532,20 +535,29 @@ function formatNumCleanSigned(num) {
   return num < 0 ? '-' + formatNumClean(num) : formatNumClean(num);
 }
 
-function dateRangeKey(str) {
-  const parts = (str || '').trim().split('/');
-  if (parts.length !== 3) return null;
-  const m = parseInt(parts[0], 10), d = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
-  if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
-  return y * 10000 + m * 100 + d;
+
+function parseDateAny(str) {
+  const s = (str || '').trim();
+  if (s.includes('/')) {
+    const parts = s.split('/');
+    if (parts.length !== 3) return null;
+    const m = parseInt(parts[0], 10), d = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
+    if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
+    return { y: y, m: m, d: d };
+  }
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return { y: parseInt(iso[1], 10), m: parseInt(iso[2], 10), d: parseInt(iso[3], 10) };
+  return null;
 }
 
 function normalizeDateKey(str) {
-  const parts = (str || '').trim().split('/');
-  if (parts.length !== 3) return null;
-  const m = parseInt(parts[0], 10), d = parseInt(parts[1], 10), y = parseInt(parts[2], 10);
-  if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
-  return y + '-' + m + '-' + d;
+  const p = parseDateAny(str);
+  return p ? (p.y + '-' + p.m + '-' + p.d) : null;
+}
+
+function dateRangeKey(str) {
+  const p = parseDateAny(str);
+  return p ? (p.y * 10000 + p.m * 100 + p.d) : null;
 }
 
 function normalizeUsernameKey(u) {
@@ -786,7 +798,7 @@ async function processFiles() {
     const seenRanges = new Set();
     const rateIndex = {};
     for (const row of allRows) {
-      const wm = row.desc.match(/(\d{1,2}\/\d{1,2}\/\d{4})-(\d{1,2}\/\d{1,2}\/\d{4})/);
+      const wm = row.desc.match(INVOICE_PERIOD_RE);
       if (!wm) continue;
       const start = wm[1], end = wm[2];
       if (row.trxId) trxIndex[row.trxId] = { start: start, end: end, billrate: row.billrate };
@@ -809,7 +821,7 @@ async function processFiles() {
       const totalVal = parseMoney(total);
       if (totalVal === null || totalVal === 0) { zeroSkipped++; continue; }
 
-      const m = desc.match(/(\d{1,2}\/\d{1,2}\/\d{4})-(\d{1,2}\/\d{1,2}\/\d{4})/);
+      const m = desc.match(INVOICE_PERIOD_RE);
 
       if (m) {
         // ---- normal weekly row ----
@@ -850,13 +862,19 @@ async function processFiles() {
 
       // ---- refund / adjustment row ----
       refundFound++;
-      let start = null, end = null, rate = null, resolvedVia = null;
+      let start = null, end = null, rate = null, resolvedVia = null, unitsDirect = null;
+
+      // some months fill in Hours/Bill Rate on the refund line itself — trust those if present
+      if (hours.trim() !== '' && billrate.trim() !== '') {
+        rate = Math.abs(parseMoney(billrate));
+        unitsDirect = Math.abs(parseFloat(hours));
+      }
 
       const refIdMatch = desc.match(/ref\s*id\s*[:#]?\s*(\d+)/i);
       if (refIdMatch && trxIndex[refIdMatch[1]]) {
         const orig = trxIndex[refIdMatch[1]];
         start = orig.start; end = orig.end;
-        rate = orig.billrate && orig.billrate.trim() !== '' ? Math.abs(parseMoney(orig.billrate)) : null;
+        if (rate === null) rate = orig.billrate && orig.billrate.trim() !== '' ? Math.abs(parseMoney(orig.billrate)) : null;
         resolvedVia = 'refid';
       }
       if (start === null || rate === null) {
@@ -905,7 +923,7 @@ async function processFiles() {
         refundFallbackList.push(match.username + ' — placed in week ' + start + '–' + end + ' — ' + formatMoneySigned(totalVal));
       }
 
-      const unitsAbs = Math.round((Math.abs(totalVal) / rate) * 100) / 100;
+      const unitsAbs = unitsDirect !== null ? unitsDirect : Math.round((Math.abs(totalVal) / rate) * 100) / 100;
       const signedUnits = totalVal < 0 ? -unitsAbs : unitsAbs;
       outputRows.push([
         'Upwork Global Inc.', pp.project, pp.program, match.username, roleResult.role,
