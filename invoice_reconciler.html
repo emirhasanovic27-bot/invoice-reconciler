@@ -946,12 +946,16 @@ async function processFiles() {
     }
 
     // ---- build XLSX ----
-    function parseDate(str) {
+    // Convert MM/DD/YYYY string to Excel date serial number
+    function dateToSerial(str) {
       const p = (str || '').trim().split('/');
       if (p.length !== 3) return null;
       const [m, d, y] = p.map(Number);
       if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
-      return new Date(y, m - 1, d);
+      // Days since Excel epoch (Dec 30, 1899), accounting for Excel's leap-year bug
+      const date = new Date(Date.UTC(y, m - 1, d));
+      const epoch = new Date(Date.UTC(1899, 11, 30));
+      return Math.round((date - epoch) / 86400000);
     }
     function parseFinalMoney(str) {
       if (str === null || str === undefined) return 0;
@@ -966,25 +970,25 @@ async function processFiles() {
     outputRows.forEach(row => {
       wsData.push([
         row[0], row[1], row[2], row[3], row[4], row[5], row[6],
-        row[7] || "", row[8],
-        parseDate(row[9]), parseDate(row[10]),
+        row[7] || '', row[8],
+        dateToSerial(row[9]), dateToSerial(row[10]),
         row[11], row[12],
         parseFinalMoney(row[13]),
         row[14],
         parseFloat(row[15]) || 0,
         1,
         parseFinalMoney(row[17]),
-        row[18] || ""
+        row[18] || ''
       ]);
     });
 
-    const ws = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true });
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
     for (let r = 2; r <= outputRows.length + 1; r++) {
-      if (ws["J" + r]) ws["J" + r].z = "mm/dd/yyyy";
-      if (ws["K" + r]) ws["K" + r].z = "mm/dd/yyyy";
-      if (ws["N" + r]) ws["N" + r].z = '$#,##0.00';
-      if (ws["P" + r]) ws["P" + r].z = "#,##0.00";
-      if (ws["R" + r]) ws["R" + r].z = '$#,##0.00';
+      if (ws['J' + r]) { ws['J' + r].t = 'n'; ws['J' + r].z = 'mm/dd/yyyy'; }
+      if (ws['K' + r]) { ws['K' + r].t = 'n'; ws['K' + r].z = 'mm/dd/yyyy'; }
+      if (ws['N' + r]) ws['N' + r].z = '$#,##0.00';
+      if (ws['P' + r]) ws['P' + r].z = '#,##0.00';
+      if (ws['R' + r]) ws['R' + r].z = '$#,##0.00';
     }
     ws["!cols"] = [
       {wch:20},{wch:12},{wch:38},{wch:20},{wch:58},{wch:20},{wch:10},
@@ -992,7 +996,7 @@ async function processFiles() {
       {wch:6},{wch:10},{wch:6},{wch:18},{wch:20}
     ];
     XLSX.utils.book_append_sheet(wb, ws, "Invoice Data");
-    const xlsxBuf = XLSX.write(wb, { bookType: "xlsx", type: "array", cellDates: true });
+    const xlsxBuf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     generatedXlsxBlob = new Blob([xlsxBuf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 
         // ---- render results ----
