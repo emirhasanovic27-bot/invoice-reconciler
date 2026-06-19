@@ -437,6 +437,7 @@
   <footer>Everything runs in your browser — no files are uploaded anywhere.</footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const LANG_MAP = {
   'ar':'Arabic','ca':'Catalan','cs':'Czech','de':'German','es-419':'Spanish',
@@ -454,8 +455,8 @@ const INVOICE_PERIOD_RE = /(\d{1,2}\/\d{1,2}\/\d{4})\s*-\s*(\d{1,2}\/\d{1,2}\/\d
 
 let invoiceFiles = [];
 let customFile = null;
-let generatedCsv = null;
-let generatedFilename = 'Invoice_Template.csv';
+let generatedXlsxBlob = null;
+let generatedFilename = 'Invoice_Template.xlsx';
 
 // ---------- CSV parsing ----------
 function parseCSV(text) {
@@ -549,6 +550,10 @@ function parseDateAny(str) {
   const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (iso) return { y: parseInt(iso[1], 10), m: parseInt(iso[2], 10), d: parseInt(iso[3], 10) };
   return null;
+}
+
+function isSurgeCode(gcode) {
+  return (gcode || '').trim().toLowerCase().endsWith('-s');
 }
 
 function normalizeDateKey(str) {
@@ -852,9 +857,10 @@ async function processFiles() {
         const billingRate = billrate.trim() !== '' ? Math.abs(parseMoney(billrate)) : null;
         const billedUnits = hours.trim() !== '' ? formatUnits(hours) : '';
         const totalAmt = Math.abs(totalVal);
+        const costCategory = isSurgeCode(gcode) ? 'Weekend Overtime' : 'Resource';
         outputRows.push([
           'Upwork Global Inc.', pp.project, pp.program, match.username, roleResult.role,
-          'Resource', 'Remote', '', 'Remote',
+          costCategory, 'Remote', '', 'Remote',
           start, end, 'Hourly', 'USD',
           billingRate !== null ? formatMoney(billingRate) : '',
           'Hours', billedUnits, 1,
@@ -928,9 +934,10 @@ async function processFiles() {
 
       const unitsAbs = unitsDirect !== null ? unitsDirect : Math.round((Math.abs(totalVal) / rate) * 100) / 100;
       const signedUnits = totalVal < 0 ? -unitsAbs : unitsAbs;
+      const costCategoryRefund = isSurgeCode(gcode) ? 'Weekend Overtime' : 'Resource';
       outputRows.push([
         'Upwork Global Inc.', pp.project, pp.program, match.username, roleResult.role,
-        'Resource', 'Remote', '', 'Remote',
+        costCategoryRefund, 'Remote', '', 'Remote',
         start, end, 'Hourly', 'USD',
         formatMoney(rate),
         'Hours', formatNumCleanSigned(signedUnits), 1,
@@ -938,13 +945,158 @@ async function processFiles() {
       ]);
     }
 
-    // build CSV
-    const lines = [OUTPUT_HEADER.map(csvField).join(',')];
-    for (const row of outputRows) lines.push(row.map(csvField).join(','));
-    generatedCsv = lines.join('\r\n');
+    // ---- build XLSX ----
+    const wb = XLSX.utils.book_new();
+
+    // Lookups sheet (reproduces all dropdown source lists)
+    const LOOKUPS = {
+      B: ['AI Data & Training','Content','Feedback','GenAI - Content Loop','Landspeeder','Multimodal','PKC','Project Validus','RWJ','Rating Quality Vendor Ops','SP Other','SQE','SSTO','SV&T','Search A11y','Search VMO','Site Kit','TPgM Other','Unknown','gNews','Youtube'],
+      C: ['SLS','Search Content Cur, Multimodal, Schema','Search Content Ingestion, Monitoring','Search Content Quality + Understanding','Search Content Strat, Acq, UXR','Search Content UI + Tools','1P Feedback','AIA Feedback','AIA feedback','Search 1P Fdbk: Auth+Non-Auth','Search 1P Fdbk: Product, Policy, Audit','Search GenAI Fdbk','Magi','Landspeeder','Inputs - QA','Inputs - Voices','Multimodal - SLS','AMP','Project Validus','RWJ GTM','Rating Quality Vendor Ops','Footprints','Manual Testing','Search VMO','SQE - Firefly','SQE - LLM','SQE - News','SQE - Search Quality','SQE - YouTube','Experimentation & Velocity','Search Experimentation + Velocity','Content creation & curation','Dues & membership fees (nontaxable)','Software testing & testing automation','Strategy consulting','Translate - Data','Search A11y','Search Ops BI + Reporting','Site Kit','Search Ops TVC Support','News','YT OTT Product Misc OpEx','YT Search (Core)','YT Shopping'],
+      E: ['Analyst i18n I Arabic','Analyst i18n II Arabic','Analyst i18n III Arabic','Analyst i18n I Catalan','Analyst i18n II Catalan','Analyst i18n III Catalan','Analyst i18n I Chinese-Simplified','Analyst i18n II Chinese-Simplified','Analyst i18n III Chinese-Simplified','Analyst i18n I Chinese-Traditional','Analyst i18n II Chinese-Traditional','Analyst i18n III Chinese-Traditional','Analyst i18n I Czech','Analyst i18n II Czech','Analyst i18n III Czech','Analyst i18n I Dutch','Analyst i18n II Dutch','Analyst i18n III Dutch','Analyst EN I English','Analyst EN II English','Analyst EN III English','Analyst EN IV English','Analyst i18n I Finnish','Analyst i18n II Finnish','Analyst i18n III Finnish','Analyst i18n I French','Analyst i18n II French','Analyst i18n III French','Analyst i18n I German','Analyst i18n II German','Analyst i18n III German','Analyst i18n I Hebrew','Analyst i18n II Hebrew','Analyst i18n III Hebrew','Analyst i18n I Hungarian','Analyst i18n II Hungarian','Analyst i18n III Hungarian','Analyst i18n I Indonesian','Analyst i18n II Indonesian','Analyst i18n III Indonesian','Analyst i18n I Italian','Analyst i18n II Italian','Analyst i18n III Italian','Analyst i18n I Japanese','Analyst i18n II Japanese','Analyst i18n III Japanese','Analyst i18n I Kannada','Analyst i18n II Kannada','Analyst i18n III Kannada','Analyst i18n I Korean','Analyst i18n II Korean','Analyst i18n III Korean','Analyst i18n I Malay(Latin)','Analyst i18n II Malay(Latin)','Analyst i18n III Malay(Latin)','Analyst i18n I Norwegian','Analyst i18n II Norwegian','Analyst i18n III Norwegian','Analyst i18n I Polish','Analyst i18n II Polish','Analyst i18n III Polish','Analyst i18n I Portuguese-BR','Analyst i18n II Portuguese-BR','Analyst i18n III Portuguese-BR','Analyst i18n I Romanian','Analyst i18n II Romanian','Analyst i18n III Romanian','Analyst i18n I Russian','Analyst i18n II Russian','Analyst i18n III Russian','Analyst i18n I Spanish','Analyst i18n II Spanish','Analyst i18n III Spanish','Analyst i18n I Swedish','Analyst i18n II Swedish','Analyst i18n III Swedish','Analyst i18n I Tamil','Analyst i18n II Tamil','Analyst i18n III Tamil','Analyst i18n I Thai','Analyst i18n II Thai','Analyst i18n III Thai','Analyst i18n I Turkish','Analyst i18n II Turkish','Analyst i18n III Turkish','Analyst i18n I Ukrainian','Analyst i18n II Ukrainian','Analyst i18n III Ukrainian','Analyst i18n I Vietnamese','Analyst i18n II Vietnamese','Analyst i18n III Vietnamese','Lead I','Lead II','Lead III','Program Manager','Engagement Fee','Partner Domain Cost','Google Cloud Platform Expense'],
+      F: ['Resource','Variable Cost','Fixed Fee','Adjustment','Transport Cost','NTA Hours','Miscellaneous Cost','Weekend Overtime','Overtime'],
+      G: ['Remote'],
+      I: ['Remote'],
+      L: ['Hourly','Monthly','Flat','Minutes'],
+      O: ['Hours','Units']
+    };
+    const COL_ORDER = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'];
+    const maxLookupRows = Math.max(...Object.values(LOOKUPS).map(a => a.length));
+    const lookupAoa = [];
+    for (let r = 0; r < maxLookupRows; r++) {
+      const row = {};
+      for (const [col, vals] of Object.entries(LOOKUPS)) {
+        row[col] = vals[r] || null;
+      }
+      lookupAoa.push(row);
+    }
+    const lookupSheetData = [];
+    for (let r = 0; r < maxLookupRows; r++) {
+      const row = new Array(26).fill(null);
+      for (const [col, vals] of Object.entries(LOOKUPS)) {
+        row[col.charCodeAt(0) - 65] = vals[r] || null;
+      }
+      lookupSheetData.push(row);
+    }
+    const lookupWs = XLSX.utils.aoa_to_sheet(lookupSheetData);
+    XLSX.utils.book_append_sheet(wb, lookupWs, 'Lookups');
+
+    // Invoice Data sheet
+    const dataRows = [OUTPUT_HEADER];
+    const lastDataRow = 1 + outputRows.length;
+    const dvMaxRow = Math.max(lastDataRow + 1, 4639);
+
+    // Parse date string MM/DD/YYYY into a JS Date for xlsx date encoding
+    function parseDate(str) {
+      const p = (str || '').trim().split('/');
+      if (p.length !== 3) return str;
+      const [m, d, y] = p.map(Number);
+      return new Date(y, m - 1, d);
+    }
+
+    // Parse money string "$1,234.56" to number
+    function parseFinalMoney(str) {
+      if (str === null || str === undefined) return 0;
+      const s = String(str).replace(/[$,\s]/g, '');
+      const neg = s.startsWith('-');
+      const abs = parseFloat(s.replace('-',''));
+      return isNaN(abs) ? 0 : (neg ? -abs : abs);
+    }
+
+    for (const row of outputRows) {
+      // row: [Vendor, Project, Program, LdapUsername, RoleTitle, CostCategory, FacilityType, FacilityCode,
+      //        FacilityLocation, StartDate, EndDate, RateUnit, Currency, BillingRate, BilledUom,
+      //        BilledUnits, UsdExchRate, TotalBilledAmt, Comments]
+      dataRows.push([
+        row[0],                        // Vendor (text)
+        row[1],                        // Project
+        row[2],                        // Program
+        row[3],                        // Ldap Username (text)
+        row[4],                        // Role Title
+        row[5],                        // Cost Category
+        row[6],                        // Facility Type
+        row[7],                        // Facility Code
+        row[8],                        // Facility Location
+        parseDate(row[9]),             // Start Date
+        parseDate(row[10]),            // End Date
+        row[11],                       // Rate Unit
+        row[12],                       // Currency
+        parseFinalMoney(row[13]),      // Billing Rate (number)
+        row[14],                       // Billed Uom
+        parseFloat(row[15]) || 0,      // Billed Units (number)
+        1,                             // Usd Exchange Rate
+        parseFinalMoney(row[17]),      // Total Billed Amount (number)
+        row[18] || ''                  // Comments
+      ]);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(dataRows, { cellDates: true });
+
+    // Apply number formats
+    const numRows = dataRows.length;
+    for (let r = 1; r < numRows; r++) {
+      const xlRow = r + 1; // 1-indexed, row 1 = header
+      const dateFmt = 'mm/dd/yyyy';
+      const moneyFmt = '"$"#,##0.00';
+      const unitsFmt = '#,##0.00';
+      const textFmt  = '@';
+      if (ws[`J${xlRow}`]) ws[`J${xlRow}`].z = dateFmt;
+      if (ws[`K${xlRow}`]) ws[`K${xlRow}`].z = dateFmt;
+      if (ws[`N${xlRow}`]) ws[`N${xlRow}`].z = moneyFmt;
+      if (ws[`P${xlRow}`]) ws[`P${xlRow}`].z = unitsFmt;
+      if (ws[`R${xlRow}`]) ws[`R${xlRow}`].z = moneyFmt;
+      // Ldap Username as text
+      if (ws[`D${xlRow}`]) { ws[`D${xlRow}`].t = 's'; }
+    }
+
+    // Bold header row
+    for (let c = 0; c < 19; c++) {
+      const cellRef = XLSX.utils.encode_cell({ r: 0, c });
+      if (ws[cellRef]) ws[cellRef].s = { font: { bold: true } };
+    }
+
+    // Column widths
+    ws['!cols'] = [
+      { wch: 20 }, // A
+      { wch: 12 }, // B
+      { wch: 38 }, // C
+      { wch: 20 }, // D
+      { wch: 58 }, // E
+      { wch: 20 }, // F
+      { wch: 12 }, // G
+      { wch: 12 }, // H
+      { wch: 12 }, // I
+      { wch: 18 }, // J
+      { wch: 18 }, // K
+      { wch: 10 }, // L
+      { wch: 8 },  // M
+      { wch: 12 }, // N
+      { wch: 8 },  // O
+      { wch: 10 }, // P
+      { wch: 12 }, // Q
+      { wch: 22 }, // R
+      { wch: 20 }, // S (Comments)
+    ];
+
+    // Data validations (dropdowns)
+    const dvRange = `2:${dvMaxRow}`;
+    ws['!dataValidation'] = [
+      { sqref: `B${dvRange}`, type: 'list', formula1: 'Lookups!$B$1:$B$21' },
+      { sqref: `C${dvRange}`, type: 'list', formula1: 'Lookups!$C$1:$C$44' },
+      { sqref: `E${dvRange}`, type: 'list', formula1: 'Lookups!$E$1:$E$98' },
+      { sqref: `F${dvRange}`, type: 'list', formula1: 'Lookups!$F$1:$F$9'  },
+      { sqref: `G${dvRange}`, type: 'list', formula1: 'Lookups!$G$1'        },
+      { sqref: `I${dvRange}`, type: 'list', formula1: 'Lookups!$I$1'        },
+      { sqref: `L${dvRange}`, type: 'list', formula1: 'Lookups!$L$1:$L$4'  },
+      { sqref: `O${dvRange}`, type: 'list', formula1: 'Lookups!$O$1:$O$2'  },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Invoice Data');
+
+    const xlsxBuf = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellDates: true, cellStyles: true });
+    generatedXlsxBlob = new Blob([xlsxBuf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
     const today = new Date();
-    generatedFilename = 'Invoice_Template_' + today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0') + '.csv';
+    generatedFilename = 'Invoice_Template_' + today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0') + '.xlsx';
 
     // ---- render results ----
     document.getElementById('s-total-read').textContent = totalRead.toLocaleString();
@@ -1027,9 +1179,8 @@ function renderPreview(rows) {
 document.getElementById('btn-process').addEventListener('click', processFiles);
 
 document.getElementById('btn-download').addEventListener('click', () => {
-  if (!generatedCsv) return;
-  const blob = new Blob([generatedCsv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
+  if (!generatedXlsxBlob) return;
+  const url = URL.createObjectURL(generatedXlsxBlob);
   const a = document.createElement('a');
   a.href = url;
   a.download = generatedFilename;
