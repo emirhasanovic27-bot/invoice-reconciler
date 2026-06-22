@@ -732,8 +732,19 @@ async function processFiles() {
     const cUser = findCol(cHeaders, 'username');
     const cContract = findCol(cHeaders, 'contract');
     const cGcode = findCol(cHeaders, 'g-code');
+    const cFreelancerName = findCol(cHeaders, 'freelancer name');
     if ([cDate, cUser, cContract, cGcode].includes(-1)) {
       throw new Error('Could not find expected columns (Date, Username, Contract, G-Code) in the Custom Export header.');
+    }
+
+    // Name lookup: normalised username → freelancer display name
+    const nameIndex = {};
+    for (let i = 1; i < customRows.length; i++) {
+      const r = customRows[i];
+      if (!r) continue;
+      const uname = (r[cUser] || '').trim();
+      const fname = cFreelancerName >= 0 ? (r[cFreelancerName] || '').trim() : '';
+      if (uname && fname) nameIndex[normalizeUsernameKey(uname)] = fname;
     }
 
     const customIndex = {};
@@ -763,6 +774,7 @@ async function processFiles() {
     let refundFound = 0, refundViaRefId = 0, refundViaFallback = 0, refundUnresolved = 0;
     const unmatchedList = [], unknownList = [], refundFallbackList = [], refundUnresolvedList = [];
     const outputRows = [];
+    const ref3Rows = []; // all valid billing rows for Ref 3 sheet
 
     // ---- pass 0: read every invoice file into memory ----
     const allRows = [];
@@ -866,6 +878,19 @@ async function processFiles() {
           'Hours', billedUnits, 1,
           formatMoney(totalAmt), ''
         ]);
+        // ---- also record for Ref 3 ----
+        ref3Rows.push({
+          billingWeek: start + ' - ' + end,
+          dateStr: row.dateCol,
+          username: match.username,
+          team: team,
+          gcode: gcode,
+          sowRate: billingRate || 0,
+          contractType: isSurgeCode(gcode) ? 'secondary' : 'primary',
+          program: pp.program || '',
+          hours: parseFloat(hours) || 0,
+          charge: billingRate !== null ? Math.round(billingRate * (parseFloat(hours) || 0) * 100) / 100 : 0
+        });
         continue;
       }
 
@@ -943,6 +968,19 @@ async function processFiles() {
         'Hours', formatNumCleanSigned(signedUnits), 1,
         formatMoneySigned(totalVal), ''
       ]);
+      // ---- also record for Ref 3 ----
+      ref3Rows.push({
+        billingWeek: start + ' - ' + end,
+        dateStr: row.dateCol,
+        username: match.username,
+        team: team,
+        gcode: gcode,
+        sowRate: rate,
+        contractType: isSurgeCode(gcode) ? 'secondary' : 'primary',
+        program: pp.program || '',
+        hours: signedUnits,
+        charge: totalVal
+      });
     }
 
     // ---- build XLSX ----
@@ -996,6 +1034,132 @@ async function processFiles() {
       {wch:6},{wch:10},{wch:6},{wch:18},{wch:20}
     ];
     XLSX.utils.book_append_sheet(wb, ws, "Invoice Data");
+
+    // ---- build Ref 3 sheet ----
+    const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    function dateSerialFromAny(str) {
+      // handles MM/DD/YYYY and YYYY-MM-DD
+      const s = (str || '').trim();
+      let m, d, y;
+      if (s.includes('/')) { const p = s.split('/'); m=+p[0]; d=+p[1]; y=+p[2]; }
+      else { const p = s.split('-'); y=+p[0]; m=+p[1]; d=+p[2]; }
+      if (!y || !m || !d) return null;
+      const dt = new Date(Date.UTC(y, m-1, d));
+      const epoch = new Date(Date.UTC(1899, 11, 30));
+      return Math.round((dt - epoch) / 86400000);
+    }
+    function dayOfWeekFromAny(str) {
+      const s = (str || '').trim();
+      let m, d, y;
+      if (s.includes('/')) { const p = s.split('/'); m=+p[0]; d=+p[1]; y=+p[2]; }
+      else { const p = s.split('-'); y=+p[0]; m=+p[1]; d=+p[2]; }
+      if (!y) return '';
+      return DAY_NAMES[new Date(y, m-1, d).getDay()];
+    }
+
+    // Build Ref 3 data
+    const ref3Header = ['Billing week','Date','Day of the week','Freelancer name',
+      'Username','Team','G-Code','SOW rate','Contract type','Program','Hours billed','Charge'];
+    const ref3Data = [ref3Header];
+    for (const r of ref3Rows) {
+      const fname = nameIndex[normalizeUsernameKey(r.username)] || r.username;
+      ref3Data.push([
+        r.billingWeek,
+        dateSerialFromAny(r.dateStr),
+        dayOfWeekFromAny(r.dateStr),
+        fname,
+        r.username,
+        r.team,
+        r.gcode,
+        r.sowRate,
+        r.contractType,
+        r.program,
+        r.hours,
+        r.charge
+      ]);
+    }
+
+    // Build weekly summary (columns N–Q, offset 13 from col A)
+    // Collect unique billing weeks in order of first appearance
+    const weekOrder = [];
+    const seenWeeks = new Set();
+    for (const r of ref3Rows) {
+      if (!seenWeeks.has(r.billingWeek)) { seenWeeks.add(r.billingWeek); weekOrder.push(r.billingWeek); }
+    }
+    // For each week: distinct secondary usernames, sum secondary hours, sum secondary charges
+    const weeklySummary = weekOrder.map(wk => {
+      const secondary = ref3Rows.filter(r => r.billingWeek === wk && r.contractType === 'secondary');
+      const distinctUsers = new Set(secondary.map(r => r.username)).size;
+      const totalHrs = secondary.reduce((s, r) => s + r.hours, 0);
+      const totalCharge = secondary.reduce((s, r) => s + r.charge, 0);
+      return { week: wk, hc: distinctUsers, hrs: Math.round(totalHrs * 100)/100, cost: Math.round(totalCharge * 100)/100 };
+    });
+
+    // Merge weekly summary into ref3Data rows, columns N–Q (col index 13 = null gap, 14=N, 15=O, 16=P, 17=Q)
+    ref3Data[0].push(null, 'Billing week', 'Active HC on Surge contracts / wkd',
+      'Extra service hrs total per week', 'Cost (all surge hrs/week)');
+    for (let i = 0; i < weeklySummary.length; i++) {
+      const s = weeklySummary[i];
+      const dataRowIdx = i + 1;
+      if (!ref3Data[dataRowIdx]) ref3Data[dataRowIdx] = new Array(12).fill(null);
+      while (ref3Data[dataRowIdx].length < 12) ref3Data[dataRowIdx].push(null);
+      ref3Data[dataRowIdx].push(null, s.week, s.hc, s.hrs, s.cost);
+    }
+
+    // Per-program surge summary, placed at N8 (ref3Data index 7 = xlsx row 8)
+    // Collect distinct programs from surge rows
+    const programOrder = [];
+    const seenPrograms = new Set();
+    for (const r of ref3Rows) {
+      if (r.contractType === 'secondary' && r.program && !seenPrograms.has(r.program)) {
+        seenPrograms.add(r.program);
+        programOrder.push(r.program);
+      }
+    }
+    const programSummary = programOrder.map(prog => {
+      const rows = ref3Rows.filter(r => r.contractType === 'secondary' && r.program === prog);
+      const distinctUsers = new Set(rows.map(r => r.username)).size;
+      const totalHrs   = Math.round(rows.reduce((s, r) => s + r.hours,  0) * 100) / 100;
+      const totalCost  = Math.round(rows.reduce((s, r) => s + r.charge, 0) * 100) / 100;
+      return { program: prog, hc: distinctUsers, hrs: totalHrs, cost: totalCost };
+    });
+
+    // Header row for program table — 2 rows below the weekly summary (gap row in between)
+    const progHeaderIdx = 1 + weeklySummary.length + 1; // 1 (header) + weeks + 1 (blank gap)
+    while (ref3Data.length <= progHeaderIdx) ref3Data.push(new Array(12).fill(null));
+    while (ref3Data[progHeaderIdx].length < 12) ref3Data[progHeaderIdx].push(null);
+    ref3Data[progHeaderIdx].push(null, 'Workflow',
+      'Allocated HC', 'Extra Hours (Analysts)', 'Total cost per workflow for services');
+
+    // Data rows for program table starting at index 8
+    for (let i = 0; i < programSummary.length; i++) {
+      const s = programSummary[i];
+      const rowIdx = progHeaderIdx + 1 + i;
+      while (ref3Data.length <= rowIdx) ref3Data.push(new Array(12).fill(null));
+      while (ref3Data[rowIdx].length < 12) ref3Data[rowIdx].push(null);
+      ref3Data[rowIdx].push(null, s.program, s.hc, s.hrs, s.cost);
+    }
+
+    const ws3 = XLSX.utils.aoa_to_sheet(ref3Data);
+
+    // Format main table numeric columns
+    const ref3LastRow = ref3Data.length;
+    for (let r = 2; r <= ref3LastRow; r++) {
+      if (ws3['B' + r]) { ws3['B' + r].t = 'n'; ws3['B' + r].z = 'mm/dd/yyyy'; }
+      if (ws3['H' + r]) ws3['H' + r].z = '$#,##0.00';
+      if (ws3['K' + r]) ws3['K' + r].z = '#,##0.00';
+      if (ws3['L' + r]) ws3['L' + r].z = '$#,##0.00';
+      // Weekly summary: col P = hours, col Q = cost
+      if (ws3['P' + r]) ws3['P' + r].z = '#,##0.00';
+      if (ws3['Q' + r]) ws3['Q' + r].z = '$#,##0.00';
+      // Program summary shares same P/Q columns (P=hours, Q=cost) — format already covered above
+    }
+    ws3['!cols'] = [
+      {wch:26},{wch:12},{wch:12},{wch:28},{wch:20},{wch:14},{wch:12},
+      {wch:10},{wch:12},{wch:34},{wch:12},{wch:12},{wch:4},
+      {wch:26},{wch:18},{wch:22},{wch:18}
+    ];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Ref 3');
     const xlsxBuf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     generatedXlsxBlob = new Blob([xlsxBuf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 
