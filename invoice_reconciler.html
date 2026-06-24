@@ -614,8 +614,9 @@ function getRoleTitle(contract, gcode) {
 function getProjectProgram(team) {
   const t = (team || '').toLowerCase();
   if (t.includes('content')) return { project: 'Content', program: 'Search Content Cur, Multimodal, Schema', ok: true };
-  if (t.includes('1p') && t.includes('feedback')) return { project: 'Feedback', program: '1P Feedback', ok: true };
-  if (t.includes('aia') && t.includes('feedback')) return { project: 'Feedback', program: 'AIA Feedback', ok: true };
+  const hasFeedback = t.includes('feedback') || t.includes('fdbk');
+  if ((t.includes('1p') || t.includes('1p ')) && hasFeedback) return { project: 'Feedback', program: '1P Feedback', ok: true };
+  if (t.includes('aia') && hasFeedback) return { project: 'Feedback', program: 'AIA Feedback', ok: true };
   return { project: null, program: null, ok: false };
 }
 
@@ -754,6 +755,7 @@ async function processFiles() {
     const cContract = findCol(cHeaders, 'contract');
     const cGcode = findCol(cHeaders, 'g-code');
     const cFreelancerName = findCol(cHeaders, 'freelancer name');
+    const cTeam = findCol(cHeaders, 'team');
     if ([cDate, cUser, cContract, cGcode].includes(-1)) {
       throw new Error('Could not find expected columns (Date, Username, Contract, G-Code) in the Custom Export header.');
     }
@@ -779,7 +781,7 @@ async function processFiles() {
       const uname = (r[cUser] || '').trim();
       const gcode = (r[cGcode] || '').trim();
       const key = dKey + '|' + normalizeUsernameKey(uname) + '|' + gcode.toLowerCase();
-      const entry = { contract: r[cContract], gcode: gcode, username: uname };
+      const entry = { contract: r[cContract], gcode: gcode, username: uname, ceTeam: cTeam >= 0 ? (r[cTeam] || '').trim() : '' };
       if (!customIndex[key]) customIndex[key] = [];
       else {
         const prev = customIndex[key][0];
@@ -882,7 +884,9 @@ async function processFiles() {
         }
         const match = matches[0];
         const roleResult = getRoleTitle(match.contract, match.gcode);
-        const pp = getProjectProgram(row.programSource);
+        let pp = getProjectProgram(row.programSource);
+        // Fallback: if invoice team didn't match, try the team from Custom Export
+        if (!pp.ok && match.ceTeam) pp = getProjectProgram(match.ceTeam);
         if (!roleResult.ok) {
           unknownCount++;
           unknownList.push(match.username + ' — week of ' + start + ' — "' + roleResult.role + '"');
@@ -966,7 +970,9 @@ async function processFiles() {
       }
       const match = matches[0];
       const roleResult = getRoleTitle(match.contract, match.gcode);
-      const pp = getProjectProgram(row.programSource);
+      let pp = getProjectProgram(row.programSource);
+      // Fallback: if invoice team didn't match, try the team from Custom Export
+      if (!pp.ok && match.ceTeam) pp = getProjectProgram(match.ceTeam);
       if (!roleResult.ok) {
         unknownCount++;
         unknownList.push(match.username + ' — refund, week of ' + start + ' — "' + roleResult.role + '"');
