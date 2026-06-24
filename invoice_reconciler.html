@@ -361,7 +361,7 @@
   <div class="card" style="padding: 24px;">
     <div class="uploads">
       <div class="dropzone" id="dz-invoices">
-        <input type="file" id="input-invoices" multiple accept=".csv">
+        <input type="file" id="input-invoices" multiple accept=".csv,.xlsx">
         <div class="dz-label">Invoice Support files</div>
         <div class="dz-sub">Usually around 10 CSVs</div>
         <div class="dz-count" id="count-invoices">0</div>
@@ -369,7 +369,7 @@
         <div class="filelist" id="list-invoices"></div>
       </div>
       <div class="dropzone" id="dz-custom">
-        <input type="file" id="input-custom" accept=".csv">
+        <input type="file" id="input-custom" accept=".csv,.xlsx">
         <div class="dz-label">Custom Export</div>
         <div class="dz-sub">One CSV for the period</div>
         <div class="dz-count" id="count-custom">0</div>
@@ -630,7 +630,7 @@ function setupDropzone(dzId, inputId, onFiles, multiple) {
   dz.addEventListener('drop', (e) => {
     e.preventDefault();
     dz.classList.remove('drag');
-    let files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.csv'));
+    let files = Array.from(e.dataTransfer.files).filter(f => /\.(csv|xlsx)$/i.test(f.name));
     if (!multiple) files = files.slice(0, 1);
     onFiles(files);
   });
@@ -711,6 +711,28 @@ function readFileText(file) {
   });
 }
 
+// Reads any supported file (csv or xlsx) and returns an array of arrays (same shape as parseCSV)
+function readFileRows(file) {
+  const isXlsx = /\.xlsx$/i.test(file.name);
+  if (!isXlsx) {
+    return readFileText(file).then(text => parseCSV(text));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        // Convert to array of arrays; raw:true keeps numbers as numbers, strings as strings
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+        resolve(rows);
+      } catch(err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 function showError(msg) {
   const box = document.getElementById('errorbox');
   box.textContent = msg;
@@ -724,8 +746,7 @@ async function processFiles() {
   document.getElementById('btn-process').textContent = 'Processing…';
 
   try {
-    const customText = await readFileText(customFile);
-    const customRows = parseCSV(customText);
+    const customRows = await readFileRows(customFile);
     if (customRows.length < 2) throw new Error('Custom Export file looks empty.');
     const cHeaders = customRows[0];
     const cDate = findCol(cHeaders, 'date');
@@ -779,35 +800,40 @@ async function processFiles() {
     // ---- pass 0: read every invoice file into memory ----
     const allRows = [];
     for (const file of invoiceFiles) {
-      const text = await readFileText(file);
-      const rows = parseCSV(text);
+      const rows = await readFileRows(file);
       if (rows.length < 1) continue;
-      const headers = rows[0];
-      const iDate = findCol(headers, 'date');
-      const iTrx = findCol(headers, 'trx id');
-      const iUser = findCol(headers, 'username');
-      const iDesc = findCol(headers, 'description');
-      const iTeam = findCol(headers, 'team');
+      const headers = rows[0].map(h => String(h || ''));
+      const iDate  = findCol(headers, 'date');
+      const iTrx   = findCol(headers, 'trx id');
+      const iUser  = findCol(headers, 'username');
+      const iDesc  = findCol(headers, 'description');
       const iGcode = findCol(headers, 'g-code');
       const iHours = findCol(headers, 'hours');
-      const iRate = findCol(headers, 'bill rate');
+      const iRate  = findCol(headers, 'bill rate');
       const iTotal = findCol(headers, 'total billing');
+      // Version 1: column F = "team"; Version 2: column F = "team/language", column K = "program mapping"
+      const iTeam  = findCol(headers, 'team') >= 0 ? findCol(headers, 'team') : findCol(headers, 'team/language');
+      const iProgramMapping = findCol(headers, 'program mapping');
       if ([iDate, iTrx, iUser, iDesc, iTeam, iGcode, iHours, iRate, iTotal].includes(-1)) {
         throw new Error('File "' + file.name + '" is missing one of the expected columns (Date, TRX ID, Username, Description, Team, G-Code, Hours, Bill Rate, Total Billing).');
       }
       for (let i = 1; i < rows.length; i++) {
         const r = rows[i];
         if (!r || r.length < iTotal + 1) continue;
+        const team = String(r[iTeam] || '');
+        // programSource: use "program mapping" column if present (version 2), otherwise team (version 1)
+        const programSource = (iProgramMapping >= 0 && r[iProgramMapping]) ? String(r[iProgramMapping]) : team;
         allRows.push({
-          dateCol: r[iDate] || '',
-          trxId: (r[iTrx] || '').trim(),
-          username: (r[iUser] || '').trim(),
-          desc: r[iDesc] || '',
-          team: r[iTeam] || '',
-          gcode: (r[iGcode] || '').trim(),
-          hours: r[iHours] || '',
-          billrate: r[iRate] || '',
-          total: r[iTotal] || ''
+          dateCol:       String(r[iDate]  || ''),
+          trxId:         String(r[iTrx]   || '').trim(),
+          username:      String(r[iUser]  || '').trim(),
+          desc:          String(r[iDesc]  || ''),
+          team:          team,
+          programSource: programSource,
+          gcode:         String(r[iGcode] || '').trim(),
+          hours:         String(r[iHours] || ''),
+          billrate:      String(r[iRate]  || ''),
+          total:         String(r[iTotal] || '')
         });
       }
     }
@@ -856,7 +882,7 @@ async function processFiles() {
         }
         const match = matches[0];
         const roleResult = getRoleTitle(match.contract, match.gcode);
-        const pp = getProjectProgram(team);
+        const pp = getProjectProgram(row.programSource);
         if (!roleResult.ok) {
           unknownCount++;
           unknownList.push(match.username + ' — week of ' + start + ' — "' + roleResult.role + '"');
@@ -940,7 +966,7 @@ async function processFiles() {
       }
       const match = matches[0];
       const roleResult = getRoleTitle(match.contract, match.gcode);
-      const pp = getProjectProgram(team);
+      const pp = getProjectProgram(row.programSource);
       if (!roleResult.ok) {
         unknownCount++;
         unknownList.push(match.username + ' — refund, week of ' + start + ' — "' + roleResult.role + '"');
