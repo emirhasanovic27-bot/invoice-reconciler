@@ -908,19 +908,21 @@ async function processFiles() {
           'Hours', billedUnits, 1,
           formatMoney(totalAmt), ''
         ]);
-        // ---- also record for Ref 3 ----
-        ref3Rows.push({
-          billingWeek: start + ' - ' + end,
-          dateStr: row.dateCol,
-          username: match.username,
-          team: team,
-          gcode: gcode,
-          sowRate: billingRate || 0,
-          contractType: isSurgeCode(gcode) ? 'secondary' : 'primary',
-          program: pp.program || '',
-          hours: parseFloat(hours) || 0,
-          charge: billingRate !== null ? Math.round(billingRate * (parseFloat(hours) || 0) * 100) / 100 : 0
-        });
+        // ---- also record for Ref 3 (analysts only — skip PM and Lead) ----
+        if (!roleResult.role.startsWith('Program Manager') && !roleResult.role.startsWith('Lead')) {
+          ref3Rows.push({
+            billingWeek: start + ' - ' + end,
+            dateStr: row.dateCol,
+            username: match.username,
+            team: team,
+            gcode: gcode,
+            sowRate: billingRate || 0,
+            contractType: isSurgeCode(gcode) ? 'secondary' : 'primary',
+            program: pp.program || '',
+            hours: parseFloat(hours) || 0,
+            charge: billingRate !== null ? Math.round(billingRate * (parseFloat(hours) || 0) * 100) / 100 : 0
+          });
+        }
         continue;
       }
 
@@ -1000,19 +1002,21 @@ async function processFiles() {
         'Hours', formatNumCleanSigned(signedUnits), 1,
         formatMoneySigned(totalVal), ''
       ]);
-      // ---- also record for Ref 3 ----
-      ref3Rows.push({
-        billingWeek: start + ' - ' + end,
-        dateStr: row.dateCol,
-        username: match.username,
-        team: team,
-        gcode: gcode,
-        sowRate: rate,
-        contractType: isSurgeCode(gcode) ? 'secondary' : 'primary',
-        program: pp.program || '',
-        hours: signedUnits,
-        charge: totalVal
-      });
+      // ---- also record for Ref 3 (analysts only — skip PM and Lead) ----
+      if (!roleResult.role.startsWith('Program Manager') && !roleResult.role.startsWith('Lead')) {
+        ref3Rows.push({
+          billingWeek: start + ' - ' + end,
+          dateStr: row.dateCol,
+          username: match.username,
+          team: team,
+          gcode: gcode,
+          sowRate: rate,
+          contractType: isSurgeCode(gcode) ? 'secondary' : 'primary',
+          program: pp.program || '',
+          hours: signedUnits,
+          charge: totalVal
+        });
+      }
     }
 
     // ---- build XLSX ----
@@ -1065,6 +1069,60 @@ async function processFiles() {
       {wch:10},{wch:10},{wch:14},{wch:14},{wch:8},{wch:6},{wch:12},
       {wch:6},{wch:10},{wch:6},{wch:18},{wch:20}
     ];
+    // ---- append static fee rows ----
+    // Find earliest start date (col J) and latest end date (col K) from all output rows
+    let minDateSerial = null, maxDateSerial = null;
+    let minDateStr = null, maxDateStr = null;
+    for (let r = 2; r <= outputRows.length + 1; r++) {
+      const jCell = ws['J' + r], kCell = ws['K' + r];
+      if (jCell && jCell.v !== undefined && jCell.v !== null) {
+        if (minDateSerial === null || jCell.v < minDateSerial) {
+          minDateSerial = jCell.v;
+          // recover MM/DD/YYYY string from outputRows (col index 9)
+          minDateStr = outputRows[r - 2][9];
+        }
+      }
+      if (kCell && kCell.v !== undefined && kCell.v !== null) {
+        if (maxDateSerial === null || kCell.v > maxDateSerial) {
+          maxDateSerial = kCell.v;
+          maxDateStr = outputRows[r - 2][10];
+        }
+      }
+    }
+    const feeStartSerial = minDateSerial;
+    const feeEndSerial   = maxDateSerial;
+
+    // Static fee rows — only dates change each month
+    const FEE_ROWS = [
+      ['Upwork Global Inc.','Content','Search Content Cur, Multimodal, Schema',null,'Google Cloud Platform Expense','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',405,'Units',0.50864198,1,206,null],
+      ['Upwork Global Inc.','Content','Search Content Cur, Multimodal, Schema',null,'Partner Domain Cost','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',22000,'Units',0.50977273,1,11215,null],
+      ['Upwork Global Inc.','Content','Search Content Cur, Multimodal, Schema',null,'Engagement Fee','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',10000,'Units',1,1,10000,null],
+      ['Upwork Global Inc.','Feedback','1P Feedback',null,'Google Cloud Platform Expense','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',405,'Units',0.37530864,1,152,null],
+      ['Upwork Global Inc.','Feedback','1P Feedback',null,'Partner Domain Cost','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',22000,'Units',0.37518182,1,8254,null],
+      ['Upwork Global Inc.','Feedback','AIA Feedback',null,'Google Cloud Platform Expense','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',405,'Units',0.11604938,1,47,null],
+      ['Upwork Global Inc.','Feedback','AIA Feedback',null,'Partner Domain Cost','Fixed Fee','Remote',null,'Remote',null,null,'Monthly','USD',22000,'Units',0.11504545,1,2531,null],
+    ];
+
+    const feeStartRow = outputRows.length + 2; // row after last data row (1-indexed)
+    FEE_ROWS.forEach((feeRow, idx) => {
+      const r = feeStartRow + idx;
+      feeRow.forEach((val, colIdx) => {
+        const colLetter = String.fromCharCode(65 + colIdx);
+        if (val === null) return;
+        ws[colLetter + r] = { v: val, t: typeof val === 'number' ? 'n' : 's' };
+      });
+      // Inject billing period dates
+      if (feeStartSerial !== null) { ws['J' + r] = { v: feeStartSerial, t: 'n', z: 'mm/dd/yyyy' }; }
+      if (feeEndSerial !== null)   { ws['K' + r] = { v: feeEndSerial,   t: 'n', z: 'mm/dd/yyyy' }; }
+      // Format numeric columns
+      if (ws['N' + r]) ws['N' + r].z = '$#,##0.00';
+      if (ws['P' + r]) ws['P' + r].z = '#,##0.00';
+      if (ws['R' + r]) ws['R' + r].z = '$#,##0.00';
+    });
+
+    // Expand sheet range to include fee rows
+    ws['!ref'] = 'A1:S' + (feeStartRow + FEE_ROWS.length - 1);
+
     XLSX.utils.book_append_sheet(wb, ws, "Invoice Data");
 
     // ---- build Ref 3 sheet ----
